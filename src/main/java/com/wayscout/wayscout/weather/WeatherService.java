@@ -1,6 +1,7 @@
 package com.wayscout.wayscout.weather;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -8,6 +9,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -19,10 +21,12 @@ public class WeatherService {
     private static final DateTimeFormatter WEATHER_API_DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final RestClient restClient;
+    private final ObjectMapper objectMapper;
     private final String apiKey;
 
-    public WeatherService(@Value("${weather.api.key}") String apiKey) {
+    public WeatherService(@Value("${weather.api.key}") String apiKey, ObjectMapper objectMapper) {
         this.apiKey = apiKey;
+        this.objectMapper = objectMapper;
         this.restClient = RestClient.builder()
                 .baseUrl("https://api.weatherapi.com/v1")
                 .build();
@@ -82,7 +86,7 @@ public class WeatherService {
 
     private JsonNode requestForecast(String location) {
         try {
-            return restClient.get()
+            byte[] responseBytes = restClient.get()
                     .uri(uriBuilder -> uriBuilder
                             .path("/forecast.json")
                             .queryParam("key", apiKey)
@@ -92,10 +96,22 @@ public class WeatherService {
                             .queryParam("alerts", "no")
                             .build())
                     .retrieve()
-                    .body(JsonNode.class);
+                .body(byte[].class);
+
+            String responseBody = responseBytes == null ? null : new String(responseBytes, StandardCharsets.UTF_8);
+
+            if (responseBody == null || responseBody.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "WeatherAPI devolvio una respuesta vacia.");
+            }
+
+            return objectMapper.readTree(responseBody);
         } catch (HttpClientErrorException.BadRequest e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "No se pudo obtener el clima para la localidad solicitada.", e);
+        } catch (HttpClientErrorException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "WeatherAPI respondio con error.", e);
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                     "Error al consultar WeatherAPI.", e);
